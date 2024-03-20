@@ -42,6 +42,318 @@ export default function App() {
     }
   };
 
+  const reunitePolygon = (updatedA) => {
+    console.log("reunite the polygon");
+
+    const lastPolygonIndex = updatedA.length - 2;
+    const lastPolygon = updatedA[lastPolygonIndex];
+
+    const updatedMarkers = lastPolygon.markers;
+    const lines = [...lastPolygon.lines];
+
+    if (updatedMarkers.length >= 3) {
+      // Check if there are enough markers to create a polygon
+      const polygonCoordinates = updatedMarkers.map((marker) => [
+        marker.lng,
+        marker.lat,
+      ]);
+
+      // Add the last line
+      const lastMarker = updatedMarkers[updatedMarkers.length - 1];
+      const firstMarker = updatedMarkers[0];
+      const lastLineId = generateUniqueID();
+      const lastLine = {
+        id: lastLineId,
+        type: "LineString",
+        coordinates: [
+          [lastMarker.lng, lastMarker.lat],
+          [firstMarker.lng, firstMarker.lat],
+        ],
+      };
+
+      lines.push(lastLine);
+
+      const lastLineLayer = {
+        id: `line-${lastLineId}`,
+        type: "line",
+        source: {
+          type: "geojson",
+          data: lastLine,
+        },
+        paint: {
+          "line-color": "#000",
+          "line-width": 2,
+        },
+      };
+      map.current.addLayer(lastLineLayer);
+
+      const polygonGeoJSON = {
+        type: "Feature",
+        properties: {},
+        geometry: {
+          type: "Polygon",
+          coordinates: [polygonCoordinates],
+        },
+      };
+
+      const polygonId = `polygon-${generateUniqueID()}`;
+      const polygon = {
+        id: polygonId,
+        type: "fill",
+        source: {
+          type: "geojson",
+          data: polygonGeoJSON,
+        },
+        paint: {
+          "fill-color": "#088",
+          "fill-opacity": 0.4,
+        },
+      };
+
+      map.current.addLayer(polygon);
+      lastPolygon.polygonId = polygonId;
+    }
+
+    updatedA[lastPolygonIndex] = {
+      ...lastPolygon,
+      markers: updatedMarkers,
+      lines,
+    };
+
+    deleteDinamicLine();
+  };
+
+  const makeNewPolygon = (lng, lat, updatedA) => {
+    const lastLineId = generateUniqueID();
+    const lastLine = {
+      id: lastLineId,
+      type: "LineString",
+      coordinates: [
+        [
+          updatedA[updatedA.length - 1].markers[
+            updatedA[updatedA.length - 1].markers.length - 1
+          ].lng,
+          updatedA[updatedA.length - 1].markers[
+            updatedA[updatedA.length - 1].markers.length - 1
+          ].lat,
+        ],
+        [
+          updatedA[updatedA.length - 1].markers[0].lng,
+          updatedA[updatedA.length - 1].markers[0].lat,
+        ],
+      ],
+    };
+
+    const lineLayer = {
+      id: `line-${lastLineId}`,
+      type: "line",
+      source: {
+        type: "geojson",
+        data: lastLine,
+      },
+      paint: {
+        "line-color": "#000",
+        "line-width": 2,
+      },
+    };
+
+    map.current.addLayer(lineLayer);
+    // Push last line
+    updatedA[updatedA.length - 1].lines.push(lastLine);
+
+    deleteDinamicLine();
+
+    updatedA.push({
+      polygon: `polygon-${generateUniqueID()}`,
+      markers: [],
+      lines: [],
+    });
+
+    if (updatedA.length > 1) {
+      const lastPolygon = updatedA[updatedA.length - 2];
+      const polygonCoordinates = lastPolygon.markers.map((marker) => [
+        marker.lng,
+        marker.lat,
+      ]);
+      polygonCoordinates.push([lng, lat]);
+
+      const polygonGeoJSON = {
+        type: "Feature",
+        properties: {},
+        geometry: {
+          type: "Polygon",
+          coordinates: [polygonCoordinates],
+        },
+      };
+
+      const polygonId = `polygon-${generateUniqueID()}`;
+      const polygon = {
+        id: polygonId,
+        type: "fill",
+        source: {
+          type: "geojson",
+          data: polygonGeoJSON,
+        },
+        paint: {
+          "fill-color": "#088",
+          "fill-opacity": 0.4,
+        },
+      };
+
+      map.current.addLayer(polygon);
+      lastPolygon.polygonId = polygonId; // Store the polygon ID in state
+    }
+  };
+
+  const draggableMarker = (lng, lat, newMarker) => {
+    const newMarkerInstance = new mapboxgl.Marker({ draggable: true })
+      .setLngLat([lng, lat])
+      .addTo(map.current);
+    newMarker.instance = newMarkerInstance;
+
+    newMarkerInstance.on("dragend", () => {
+      const markerLngLat = newMarkerInstance.getLngLat();
+
+      setA((prevA) => {
+        const updatedPolygons = prevA.map((polygon) => {
+          const updatedMarkers = polygon.markers.map((marker) => {
+            if (marker.id === newMarker.id) {
+              return {
+                ...marker,
+                lng: markerLngLat.lng,
+                lat: markerLngLat.lat,
+              };
+            }
+            return marker;
+          });
+
+          const updatedLines = polygon.lines.map((line) => {
+            const lineCoordinates = line.coordinates.map((coordinate) => {
+              // Find the index of the marker associated with this coordinate in the line
+              const markerIndex = polygon.markers.findIndex(
+                (marker) =>
+                  marker.lng === coordinate[0] && marker.lat === coordinate[1]
+              );
+
+              if (markerIndex !== -1) {
+                return [
+                  polygon.markers[markerIndex].instance.getLngLat().lng,
+                  polygon.markers[markerIndex].instance.getLngLat().lat,
+                ];
+              }
+
+              return coordinate;
+            });
+
+            // Update the source data for each line layer
+            map.current.getSource(`line-${line.id}`).setData({
+              type: "Feature",
+              properties: {},
+              geometry: {
+                type: "LineString",
+                coordinates: lineCoordinates,
+              },
+            });
+
+            return { ...line, coordinates: lineCoordinates };
+          });
+
+          const polygonCoordinates = updatedMarkers.map((marker) => [
+            marker.lng,
+            marker.lat,
+          ]);
+
+          if (polygon.polygonId) {
+            map.current.getSource(polygon.polygonId).setData({
+              type: "Feature",
+              properties: {},
+              geometry: {
+                type: "Polygon",
+                coordinates: [polygonCoordinates],
+              },
+            });
+          }
+
+          return {
+            ...polygon,
+            markers: updatedMarkers,
+            lines: updatedLines,
+          };
+        });
+
+        return updatedPolygons;
+      });
+    });
+  };
+
+  const makeChangesForPolygon = (
+    lng,
+    lat,
+    updatedA,
+    lastPolygonIndex,
+    newMarker
+  ) => {
+    const lastPolygon = updatedA[lastPolygonIndex];
+    const updatedMarkers = [...lastPolygon.markers, newMarker];
+    const lines = [...lastPolygon.lines];
+
+    if (updatedMarkers.length > 1) {
+      const previousMarker = updatedMarkers[updatedMarkers.length - 2];
+      const newLineId = generateUniqueID();
+      const newLine = {
+        id: newLineId,
+        type: "LineString",
+        coordinates: [
+          [previousMarker.lng, previousMarker.lat],
+          [lng, lat],
+        ],
+      };
+
+      lines.push(newLine);
+
+      const lineLayer = {
+        id: `line-${newLineId}`,
+        type: "line",
+        source: {
+          type: "geojson",
+          data: newLine,
+        },
+        paint: {
+          "line-color": "#000",
+          "line-width": 2,
+        },
+      };
+
+      map.current.addLayer(lineLayer);
+    }
+
+    updatedA[lastPolygonIndex] = {
+      ...lastPolygon,
+      markers: updatedMarkers,
+      lines,
+    };
+  };
+
+  const markerInWhichPolygon = (lng, lat, updatedA, newMarker) => {
+    if (
+      updatedA.length > 1 &&
+      updatedA[updatedA.length - 1].markers.length === 0 &&
+      (updatedA[updatedA.length - 2].markers.length === 1 ||
+        !(
+          updatedA[updatedA.length - 2].lines[0].coordinates[0][0] ===
+          updatedA[updatedA.length - 2].lines[
+            updatedA[updatedA.length - 2].lines.length - 1
+          ].coordinates[1][0]
+        ))
+    ) {
+      const lastPolygonIndex = updatedA.length - 2;
+      makeChangesForPolygon(lng, lat, updatedA, lastPolygonIndex, newMarker);
+    } else {
+      const lastPolygonIndex = updatedA.length - 1;
+      makeChangesForPolygon(lng, lat, updatedA, lastPolygonIndex, newMarker);
+    }
+  };
+
   const markersAndLines = (newMarker, lng, lat) => {
     setA((prevA) => {
       let updatedA = [...prevA];
@@ -53,82 +365,7 @@ export default function App() {
         Math.abs(updatedA[updatedA.length - 2].markers[0].lat - lat) < 0.03;
 
       if (isNearFirstMarker) {
-        console.log("reunite the polygon");
-
-        const lastPolygonIndex = updatedA.length - 2;
-        const lastPolygon = updatedA[lastPolygonIndex];
-
-        const updatedMarkers = lastPolygon.markers;
-        const lines = [...lastPolygon.lines];
-
-        if (updatedMarkers.length >= 3) {
-          // Check if there are enough markers to create a polygon
-          const polygonCoordinates = updatedMarkers.map((marker) => [
-            marker.lng,
-            marker.lat,
-          ]);
-
-          // Add the last line
-          const lastMarker = updatedMarkers[updatedMarkers.length - 1];
-          const firstMarker = updatedMarkers[0];
-          const lastLineId = generateUniqueID();
-          const lastLine = {
-            id: lastLineId,
-            type: "LineString",
-            coordinates: [
-              [lastMarker.lng, lastMarker.lat],
-              [firstMarker.lng, firstMarker.lat],
-            ],
-          };
-          lines.push(lastLine);
-          const lastLineLayer = {
-            id: `line-${lastLineId}`,
-            type: "line",
-            source: {
-              type: "geojson",
-              data: lastLine,
-            },
-            paint: {
-              "line-color": "#000",
-              "line-width": 2,
-            },
-          };
-          map.current.addLayer(lastLineLayer);
-
-          const polygonGeoJSON = {
-            type: "Feature",
-            properties: {},
-            geometry: {
-              type: "Polygon",
-              coordinates: [polygonCoordinates],
-            },
-          };
-
-          const polygonId = `polygon-${generateUniqueID()}`;
-          const polygon = {
-            id: polygonId,
-            type: "fill",
-            source: {
-              type: "geojson",
-              data: polygonGeoJSON,
-            },
-            paint: {
-              "fill-color": "#088",
-              "fill-opacity": 0.4,
-            },
-          };
-
-          map.current.addLayer(polygon);
-          lastPolygon.polygonId = polygonId;
-        }
-
-        updatedA[lastPolygonIndex] = {
-          ...lastPolygon,
-          markers: updatedMarkers,
-          lines,
-        };
-
-        deleteDinamicLine();
+        reunitePolygon(updatedA);
       } else if (
         updatedA.length === 0 ||
         (updatedA[updatedA.length - 1].markers.length > 2 &&
@@ -137,263 +374,13 @@ export default function App() {
       ) {
         console.log("new polygon");
 
-        const lastLineId = generateUniqueID();
-        const lastLine = {
-          id: lastLineId,
-          type: "LineString",
-          coordinates: [
-            [
-              updatedA[updatedA.length - 1].markers[
-                updatedA[updatedA.length - 1].markers.length - 1
-              ].lng,
-              updatedA[updatedA.length - 1].markers[
-                updatedA[updatedA.length - 1].markers.length - 1
-              ].lat,
-            ],
-            [
-              updatedA[updatedA.length - 1].markers[0].lng,
-              updatedA[updatedA.length - 1].markers[0].lat,
-            ],
-          ],
-        };
+        makeNewPolygon(lng, lat, updatedA);
 
-        const lineLayer = {
-          id: `line-${lastLineId}`,
-          type: "line",
-          source: {
-            type: "geojson",
-            data: lastLine,
-          },
-          paint: {
-            "line-color": "#000",
-            "line-width": 2,
-          },
-        };
-
-        map.current.addLayer(lineLayer);
-        // Push last line
-        updatedA[updatedA.length - 1].lines.push(lastLine);
-
-        deleteDinamicLine();
-
-        updatedA.push({
-          polygon: `polygon-${generateUniqueID()}`,
-          markers: [],
-          lines: [],
-        });
-
-        if (updatedA.length > 1) {
-          const lastPolygon = updatedA[updatedA.length - 2];
-          const polygonCoordinates = lastPolygon.markers.map((marker) => [
-            marker.lng,
-            marker.lat,
-          ]);
-          polygonCoordinates.push([lng, lat]);
-
-          const polygonGeoJSON = {
-            type: "Feature",
-            properties: {},
-            geometry: {
-              type: "Polygon",
-              coordinates: [polygonCoordinates],
-            },
-          };
-
-          const polygonId = `polygon-${generateUniqueID()}`;
-          const polygon = {
-            id: polygonId,
-            type: "fill",
-            source: {
-              type: "geojson",
-              data: polygonGeoJSON,
-            },
-            paint: {
-              "fill-color": "#088",
-              "fill-opacity": 0.4,
-            },
-          };
-
-          map.current.addLayer(polygon);
-          lastPolygon.polygonId = polygonId; // Store the polygon ID in state
-        }
         return updatedA;
       } else {
-        const newMarkerInstance = new mapboxgl.Marker({ draggable: true })
-          .setLngLat([lng, lat])
-          .addTo(map.current);
-        newMarker.instance = newMarkerInstance;
-
-        newMarkerInstance.on("dragend", () => {
-          const markerLngLat = newMarkerInstance.getLngLat();
-
-          setA((prevA) => {
-            const updatedPolygons = prevA.map((polygon) => {
-              const updatedMarkers = polygon.markers.map((marker) => {
-                if (marker.id === newMarker.id) {
-                  return {
-                    ...marker,
-                    lng: markerLngLat.lng,
-                    lat: markerLngLat.lat,
-                  };
-                }
-                return marker;
-              });
-
-              const updatedLines = polygon.lines.map((line) => {
-                const lineCoordinates = line.coordinates.map((coordinate) => {
-                  // Find the index of the marker associated with this coordinate in the line
-                  const markerIndex = polygon.markers.findIndex(
-                    (marker) =>
-                      marker.lng === coordinate[0] &&
-                      marker.lat === coordinate[1]
-                  );
-
-                  if (markerIndex !== -1) {
-                    return [
-                      polygon.markers[markerIndex].instance.getLngLat().lng,
-                      polygon.markers[markerIndex].instance.getLngLat().lat,
-                    ];
-                  }
-
-                  return coordinate;
-                });
-
-                // Update the source data for each line layer
-                map.current.getSource(`line-${line.id}`).setData({
-                  type: "Feature",
-                  properties: {},
-                  geometry: {
-                    type: "LineString",
-                    coordinates: lineCoordinates,
-                  },
-                });
-
-                return { ...line, coordinates: lineCoordinates };
-              });
-
-              const polygonCoordinates = updatedMarkers.map((marker) => [
-                marker.lng,
-                marker.lat,
-              ]);
-
-              if (polygon.polygonId) {
-                map.current.getSource(polygon.polygonId).setData({
-                  type: "Feature",
-                  properties: {},
-                  geometry: {
-                    type: "Polygon",
-                    coordinates: [polygonCoordinates],
-                  },
-                });
-              }
-
-              return {
-                ...polygon,
-                markers: updatedMarkers,
-                lines: updatedLines,
-              };
-            });
-
-            return updatedPolygons;
-          });
-        });
-
+        draggableMarker(lng, lat, newMarker);
         // sa stie in ce polygon sa puna urmatorul marker
-        if (
-          updatedA.length > 1 &&
-          updatedA[updatedA.length - 1].markers.length === 0 &&
-          (updatedA[updatedA.length - 2].markers.length === 1 ||
-            !(
-              updatedA[updatedA.length - 2].lines[0].coordinates[0][0] ===
-              updatedA[updatedA.length - 2].lines[
-                updatedA[updatedA.length - 2].lines.length - 1
-              ].coordinates[1][0]
-            ))
-        ) {
-          let secondlastPolygonIndex = updatedA.length - 2;
-
-          const secondlastPolygon = updatedA[secondlastPolygonIndex];
-          const updatedMarkers = [...secondlastPolygon.markers, newMarker];
-          const lines = [...secondlastPolygon.lines];
-
-          if (updatedMarkers.length > 1) {
-            const previousMarker = updatedMarkers[updatedMarkers.length - 2];
-            const newLineId = generateUniqueID();
-            const newLine = {
-              id: newLineId,
-              type: "LineString",
-              coordinates: [
-                [previousMarker.lng, previousMarker.lat],
-                [lng, lat],
-              ],
-            };
-            lines.push(newLine);
-
-            const lineLayer = {
-              id: `line-${newLineId}`,
-              type: "line",
-              source: {
-                type: "geojson",
-                data: newLine,
-              },
-              paint: {
-                "line-color": "#000",
-                "line-width": 2,
-              },
-            };
-            map.current.addLayer(lineLayer);
-          }
-
-          updatedA[secondlastPolygonIndex] = {
-            ...secondlastPolygon,
-            markers: updatedMarkers,
-            lines,
-          };
-        } else {
-          const lastPolygonIndex = updatedA.length - 1;
-          const lastPolygon = updatedA[lastPolygonIndex];
-
-          const updatedMarkers = [...lastPolygon.markers, newMarker];
-
-          const lines = [...lastPolygon.lines];
-
-          if (updatedMarkers.length > 1) {
-            const previousMarker = updatedMarkers[updatedMarkers.length - 2];
-            const newLineId = generateUniqueID();
-
-            const newLine = {
-              id: newLineId,
-              type: "LineString",
-              coordinates: [
-                [previousMarker.lng, previousMarker.lat],
-                [lng, lat],
-              ],
-            };
-
-            lines.push(newLine);
-
-            const lineLayer = {
-              id: `line-${newLineId}`,
-              type: "line",
-              source: {
-                type: "geojson",
-                data: newLine,
-              },
-              paint: {
-                "line-color": "#000",
-                "line-width": 2,
-              },
-            };
-
-            map.current.addLayer(lineLayer);
-          }
-
-          updatedA[lastPolygonIndex] = {
-            ...lastPolygon,
-            markers: updatedMarkers,
-            lines,
-          };
-        }
+        markerInWhichPolygon(lng, lat, updatedA, newMarker);
       }
       return updatedA;
     });
@@ -451,6 +438,45 @@ export default function App() {
     map.current.on("mousemove", onMouseMove);
   };
 
+  const makeDelete = (lastPolygon, updatedA) => {
+    if (lastPolygon.lines.length > 0) {
+      // Check if there are more than 2 lines
+      const lastLineId = lastPolygon.lines[lastPolygon.lines.length - 1].id;
+
+      map.current.removeLayer(`line-${lastLineId}`);
+      map.current.removeSource(`line-${lastLineId}`);
+      lastPolygon.lines.pop();
+
+      if (lastPolygon.markers.length - 1 > lastPolygon.lines.length) {
+        const lastMarker = lastPolygon.markers.pop();
+        lastMarker.instance.remove();
+      }
+
+      const lastMarkerOfPolygon =
+        lastPolygon.markers[lastPolygon.markers.length - 1];
+
+      deleteDinamicLine();
+
+      updateDynamicLine(
+        lastMarkerOfPolygon,
+        lastMarkerOfPolygon.lng,
+        lastMarkerOfPolygon.lat
+      );
+
+      map.current.removeLayer(lastPolygon.polygonId);
+    } else {
+      console.log("delete polygon");
+      updatedA.splice(updatedA.length - 1, 1);
+
+      if (lastPolygon.markers.length === 1) {
+        const lastMarker = lastPolygon.markers.pop();
+        lastMarker.instance.remove();
+      }
+
+      deleteDinamicLine();
+    }
+  };
+
   const deleteLastLine = () => {
     setA((prevA) => {
       const updatedA = [...prevA];
@@ -460,82 +486,11 @@ export default function App() {
         if (ultimul.markers.length === 0) {
           const lastPolygon = updatedA[updatedA.length - 2];
 
-          if (lastPolygon.lines.length > 0) {
-            // Check if there are more than 2 lines
-            const lastLineId =
-              lastPolygon.lines[lastPolygon.lines.length - 1].id;
-
-            map.current.removeLayer(`line-${lastLineId}`);
-            map.current.removeSource(`line-${lastLineId}`);
-            lastPolygon.lines.pop();
-
-            if (lastPolygon.markers.length - 1 > lastPolygon.lines.length) {
-              const lastMarker = lastPolygon.markers.pop();
-              lastMarker.instance.remove();
-            }
-
-            const lastMarkerOfPolygon =
-              lastPolygon.markers[lastPolygon.markers.length - 1];
-
-            deleteDinamicLine();
-
-            updateDynamicLine(
-              lastMarkerOfPolygon,
-              lastMarkerOfPolygon.lng,
-              lastMarkerOfPolygon.lat
-            );
-
-            map.current.removeLayer(lastPolygon.polygonId);
-          } else {
-            console.log("delete polygon");
-            updatedA.splice(updatedA.length - 1, 1);
-
-            if (lastPolygon.markers.length === 1) {
-              const lastMarker = lastPolygon.markers.pop();
-              lastMarker.instance.remove();
-            }
-
-            deleteDinamicLine();
-          }
+          makeDelete(lastPolygon, updatedA);
         } else {
           const lastPolygon = updatedA[updatedA.length - 1];
 
-          if (lastPolygon.lines.length > 0) {
-            const lastLineId =
-              lastPolygon.lines[lastPolygon.lines.length - 1].id;
-
-            map.current.removeLayer(`line-${lastLineId}`);
-            map.current.removeSource(`line-${lastLineId}`);
-            lastPolygon.lines.pop();
-
-            if (lastPolygon.markers.length - 1 > lastPolygon.lines.length) {
-              const lastMarker = lastPolygon.markers.pop();
-              lastMarker.instance.remove();
-            }
-
-            const lastMarkerOfPolygon =
-              lastPolygon.markers[lastPolygon.markers.length - 1];
-
-            deleteDinamicLine();
-
-            updateDynamicLine(
-              lastMarkerOfPolygon,
-              lastMarkerOfPolygon.lng,
-              lastMarkerOfPolygon.lat
-            );
-
-            map.current.removeLayer(lastPolygon.polygonId);
-          } else {
-            console.log("delete polygon");
-            updatedA.splice(updatedA.length - 1, 1);
-
-            if (lastPolygon.markers.length === 1) {
-              const lastMarker = lastPolygon.markers.pop();
-              lastMarker.instance.remove();
-            }
-
-            deleteDinamicLine();
-          }
+          makeDelete(lastPolygon, updatedA);
         }
       }
       return updatedA;
