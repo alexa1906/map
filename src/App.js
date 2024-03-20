@@ -480,6 +480,7 @@ export default function App() {
   const deleteLastLine = () => {
     setA((prevA) => {
       const updatedA = [...prevA];
+
       if (updatedA.length > 0) {
         const ultimul = updatedA[updatedA.length - 1];
 
@@ -510,7 +511,17 @@ export default function App() {
   return (
     <div>
       <div ref={mapContainer} style={{ width: "100%", height: "800px" }} />
-      <button onClick={deleteLastLine}>Delete</button>
+      <button
+        onClick={deleteLastLine}
+        disabled={
+          a.length === 0 ||
+          (a.length > 1
+            ? a[a.length - 2].markers.length < 1
+            : a[0].markers.length < 1)
+        }
+      >
+        Delete
+      </button>
     </div>
   );
 }
